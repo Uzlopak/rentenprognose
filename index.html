@@ -1,0 +1,809 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<title>Rentenprognose</title>
+
+	<link rel="stylesheet" type="text/css" href="vendor/easyui/themes/default/easyui.css">
+	<link rel="stylesheet" type="text/css" href="vendor/easyui/themes/icon.css">
+	<link rel="stylesheet" type="text/css" href="style.css">
+	
+	<script type="text/javascript" src="vendor/FileSaver.js/FileSaver.js"></script>
+	<script type="text/javascript" src="vendor/jsPDF/jspdf.js"></script>
+	<script type="text/javascript" src="vendor/jsPDF/plugins/standard_fonts_metrics.js"></script>
+	<script type="text/javascript" src="vendor/jsPDF/plugins/split_text_to_size.js"></script>
+	
+	<script type="text/javascript" src="vendor/jquery/jquery-1.11.3.js"></script>
+	<script type="text/javascript" src="vendor/easyui/jquery.easyui.min.js"></script>
+	<script type="text/javascript" src="vendor/easyui/extensions/datagridview/datagrid-groupview.js"></script>
+
+<script>
+
+
+$.fn.datebox.defaults.formatter = function(date){
+	var result = '';
+	var y = date.getFullYear();
+	var m = date.getMonth()+1;
+	var d = date.getDate();
+	result += (d < 10) ? '0' + d : d;
+	result += '.';
+	result += (m < 10) ? '0' + m : m;
+	result += '.' + y;
+	return result;
+};
+
+$.fn.datebox.defaults.parser = function(s){
+		if (s.split(".").length == 3){
+		return new Date(parseInt(s.split(".")[2]),parseInt(s.split(".")[1]) - 1,parseInt(s.split(".")[0]));
+		}else{
+		return new Date();
+	}
+};
+
+
+function monthDiff(d1, d2) {
+    var months;
+    months = (d2.getFullYear() - d1.getFullYear()) * 12;
+    months -= d1.getMonth() + 1;
+    months += d2.getMonth();
+    return months <= 0 ? 0 : months;
+}
+
+function yearDiff(d1, d2) {
+    var years = 0;
+    years = Math.abs(d2.getFullYear() - d1.getFullYear());
+    return years;
+}
+
+/*
+ * Auf- und Abzinsung zur Berechnung der Rentenanpassung
+ * oder Kaufkraft
+ */
+function compoundInterest(interest, periods) {
+    var result = 1;
+    result = Math.pow((1+interest), periods);
+    return result;
+}
+
+
+function generateConfiguration () {
+	var yearsTillPension = getYearsTillPension($.fn.datebox.defaults.parser($('#birthdate').datebox('getValue')));
+	var birthDate = $.fn.datebox.defaults.parser($('#birthdate').datebox('getValue'));
+	var expectedPension = calcExpectedPensionPointsTillRetirement(getGainedPensionPoints(), parseFloat($('#futureIncomePerMonth').textbox('getValue')), getMonthTillPension(birthDate)) * 30.45;
+	
+	var config = {
+			salutation 					: 'Herr',
+			name						: $('#lastname').val(),
+			entryDate					: new Date(),
+			averageIncome				: getDurchschnittsentgeltByYear(new Date().getFullYear()),
+			pensionValueWest			: 30.45,
+			pensionValueEast			: 28.66,
+			birthDatePlus17				: getBeginOfEmploymentByBirthDate(birthDate),
+			realPensionDate				: getStandardPensionDateByBirthDate(birthDate, true),
+			standardPensionDate 		: getStandardPensionDateByBirthDate(birthDate),
+			purchasingPower				: compoundInterest(-0.015, yearsTillPension),
+			expectedDisabilityPension	: 0,
+			pensionPoints				: getGainedPensionPoints(),
+			currentPensionGained		: parseInt(getGainedPensionPoints() * 30.45 * 100,10) / 100,
+			expectedPension				: expectedPension,
+			expectedPension1Per 		: parseInt(compoundInterest(0.01, yearsTillPension) * expectedPension / 10, 10) * 10,
+			expectedPension2Per 		: parseInt(compoundInterest(0.02, yearsTillPension) * expectedPension / 10, 10) * 10
+		};
+	return config; 
+}
+
+function generatePDF(configSet, filename) {
+	var config = {
+		salutation 					: 'Herr',
+		name						: 'Mustermann',
+		entryDate					: new Date(),
+		averageIncome				: 0,
+		pensionValueWest			: 0,
+		pensionValueEast			: 0,
+		birthDatePlus17				: new Date(),
+		realPensionDate				: new Date(),
+		standardPensionDate 		: new Date(),
+		purchasingPower				: 1.0,
+		expectedDisabilityPension	: 0,
+		currentPensionGained		: 0,
+		pensionPoints				: 0,
+		expectedPension				: 0,
+		expectedPension1Per 		: 0,
+		expectedPension2Per 		: 0,
+	};
+	$.extend(config , configSet );
+	
+	var doc = new jsPDF('p','cm','a4');
+	var margin = [2.7, 1, 2, 2.5];
+	var verticalOffset = margin[0];
+	var fontsizeS = 11;
+	var fontsizeM = 16;
+	var dpi = 72;
+	var heightfactor = 2.54;
+	
+	function pad(num, size) {
+	    var s = "          " + num;
+	    return s.substr(s.length-size);
+	}
+	
+	/*
+	* Arial hinzufügen
+	*/
+	doc.addFont('Helvetica', 'helvetica', '', 'StandardEncoding');
+	doc.addFont('Helvetica-Bold', 'helvetica', 'bold', 'StandardEncoding');
+	
+	doc.setFont('Helvetica', 'bold').setFontSize(fontsizeS);
+	doc.text(margin[3], margin[0], 'Altersvorsorge - Prognose');
+	
+	verticalOffset += 2 * fontsizeM * heightfactor / dpi;
+	
+	var einleitungsText = 'Sehr geehrter ' + config.salutation + ' ' + config.name + ',\n\n'
+		+ 'in dieser Prognose haben wir die für Sie vom ' + $.fn.datebox.defaults.formatter(config.entryDate) + ' bis zum ' + $.fn.datebox.defaults.formatter(new Date()) + '\n'
+		+ 'gespeicherten Daten und das geltende Rentenrecht berücksichtigt.Die Regelaltersrente\n'
+		+ 'würde nach Erreichen der Regelaltersgrenze (' + $.fn.datebox.defaults.formatter(config.realPensionDate) + ') am ' + $.fn.datebox.defaults.formatter(config.standardPensionDate) + ' beginnen.\n'
+		+ 'Änderungen in Ihren persönlichen Verhältnissen und gesetzliche Änderungen können sich auf\n'
+		+ 'Ihre zu erwartende Rente auswirken. Bitte beachten Sie, dass von der Rente auch Kranken und\n'
+		+ 'Pflegeversicherungsbeiträge sowie gegebenenfalls Steuern zu zahlen sind. Auf der\n'
+		+ 'Rückseite finden Sie zudem wichtige Erläuterungen und zusätzliche Informationen.\n'
+
+	doc.setFont('Helvetica', '').setFontSize(fontsizeS);
+
+	doc.text(margin[3], verticalOffset + fontsizeS * heightfactor / dpi, einleitungsText);
+	verticalOffset += 13 * fontsizeS * heightfactor / dpi;
+	
+	doc.setLineWidth(0.05);
+	doc.rect(17, verticalOffset, 3.4, 4.2); 
+
+
+	doc.setFontType("bold");
+	doc.text(margin[3], verticalOffset, 'Rente wegen voller Erwerbsminderung');
+	
+	doc.setFontType("normal");
+	verticalOffset +=  fontsizeS / 72 * heightfactor;
+
+	doc.text(margin[3], verticalOffset, 'Wären Sie heute wegen gesundheitlicher Einschränkungen voll\n'
+			+ 'erwerbsgemindert, bekämen Sie von uns eine monatliche Rente von:');
+
+	doc.setFontType("bold");
+	doc.text(17.5, verticalOffset, '\n' + pad(config.expectedDisabilityPension.toLocaleString('de', {minimumFractionDigits: 2, maximumFractionDigits: 2}), 8) + ' EUR');
+			
+	verticalOffset +=  fontsizeS * 3 * heightfactor / 72;
+
+	doc.setFontType("bold");
+	doc.text(margin[3], verticalOffset, 'Höhe Ihrer künftigen Regelaltersrente');
+	verticalOffset +=  fontsizeS * heightfactor/ 72;
+
+	doc.setFontType("normal");
+	doc.text(margin[3], verticalOffset, 'Ihre bislang erreichte Rentenanwartschaft entspräche nach heutigem Stand\n'
+			+ 'einer monatlichen Rente von:\n'
+			+ 'Sollten für Sie bis zur Regelaltersgrenze Beiträge wie im Durchschnitt der letzten\n'
+			+ 'fünf Kalenderjahre gezahlt werden, bekämen Sie ohne Berücksichtigung von\n'
+			+ 'Rentenanpassungen von uns eine monatliche Altersrente von:');
+
+	doc.setFontType("bold");
+	doc.text(17.5, verticalOffset, '\n' + pad(config.currentPensionGained.toLocaleString('de', {minimumFractionDigits: 2, maximumFractionDigits: 2}), 8) + ' EUR\n\n\n'  + pad(config.expectedPension.toLocaleString('de', {minimumFractionDigits: 2, maximumFractionDigits: 2}), 8) + ' EUR');
+	
+	verticalOffset +=  fontsizeS * 7 * heightfactor / 72;
+
+	doc.setFontType("bold");
+	doc.text(margin[3], verticalOffset, 'Rentenanpassung');
+	verticalOffset +=  fontsizeS * heightfactor/ 72;
+	
+	doc.setFontType("normal");
+	doc.text(margin[3], verticalOffset, 'Aufgrund zukünftiger Rentenanpassungen kann die errechnete Rente in Höhe von\n'
+			+ config.expectedPension.toLocaleString('de', {minimumFractionDigits: 2, maximumFractionDigits: 2}) + ' EUR tatsächlich höher ausfallen. Allerdings können auch wir die Entwicklung nicht\n'
+			+ 'vorhersehen. Deshalb haben wir - ohne Berücksichtigung des Kaufkraftverlustes - zwei\n'
+			+ 'mögliche Varianten für Sie gerechnet. Beträgt der jährliche Anpassungssatz 1 Prozent, so\n'
+			+ 'ergäbe sich eine monatliche Rente von etwa ' + config.expectedPension1Per.toLocaleString('de') + ' EUR. Bei einem jährlichen Anpassungssatz\n'
+			+ 'von 2 Prozent ergäbe sich eine monatliche Rente von etwa ' + config.expectedPension2Per.toLocaleString('de') + ' EUR.'
+	);
+	verticalOffset +=  fontsizeS * 8 * heightfactor / 72;
+
+	doc.setFontType("bold");
+	doc.text(margin[3], verticalOffset, 'Zusätzlicher Vorsorgebedarf');
+	verticalOffset +=  fontsizeS * heightfactor/ 72;
+	
+	doc.setFontType("normal");
+	doc.text(margin[3], verticalOffset, 'Da die Renten im Vergleich zu den Löhnen künftig geringer steigen werden und sich somit die\n'
+			+ 'spätere Lücke zwischen Rente und Erwerbseinkommen vergrößert, wird eine zusätzliche\n'
+			+ 'Absicherung für das Alter wichtiger ("Versorgungslücke"). Bei der ergänzenden Altersvorsorge\n'
+			+ 'sollten Sie - wie bei Ihrer zu erwartenden Rente - den Kaufkraftverlust beachten.\n'
+	);
+	verticalOffset +=  fontsizeS * 5 * heightfactor / 72;
+
+	doc.setFontType("bold");
+	doc.text(margin[3], verticalOffset, 'Grundlagen der Rentenberechnung');
+	verticalOffset +=  fontsizeS * heightfactor/ 72;
+	
+	doc.setFontType("normal");
+	doc.text(margin[3], verticalOffset, 'Die Höhe Ihrer Rente richtet sich im Wesentlichen nach Ihren durch Beiträge versicherten\n'
+			+ 'Arbeitsverdiensten. Diese rechnen wir in Entgeltpunkte um. Ihrem Rentenkonto schreiben wir\n'
+			+ 'einen Entgeltpunkt gut, wenn Sie ein Jahr lang genau den Durchschnittsverdienst aller\n'
+			+ 'Versicherten (zurzeit ' + config.averageIncome.toLocaleString('de') + ' EUR) erzielt haben. Daneben können Ihnen aber auch\n'
+			+ 'Entgeltpunkte für bestimmte Zeiten gutgeschrieben werden, in denen keine Beiträge (z.B. für\n'
+			+ 'Fachschulausbildung) oder Beiträge vom Staat, von der Agentur für Arbeit, von der\n'
+			+ 'Krankenkasse oder anderen Stellen (z.B. für Wehr- oder Zivildienst, Kindererziehung,\n'
+			+ 'Arbeitslosigkeit und Krankheit) für Sie gezahlt wurden. Um die Höhe der Rente zu ermitteln,\n'
+			+ 'werden alle Entgeltpunkte zusammengezählt und mit dem so genannten aktuellen Rentenwert\n'
+			+ 'vervielfältigt. Der aktuelle Rentenwert beträgt zurzeit ' + config.pensionValueWest.toLocaleString('de') + ' EUR in den alten und ' + config.pensionValueEast.toLocaleString('de') + ' EUR in\n'
+			+ 'den neuen Bundesländern. Das heißt, ein Entgeltpunkt entspricht heute beispielsweise in den\n'
+			+ 'alten Bundesländern einer monatlichen Rente von ' + config.pensionValueWest.toLocaleString('de') + ' EUR. Beginnt die Altersrente vor oder\n'
+			+ 'nach dem ' + $.fn.datebox.defaults.formatter(config.standardPensionDate) + ', kann dies zu Abschlägen bzw. Zuschlägen bei der Rente führen.\n'
+	);
+	verticalOffset +=  fontsizeS * 14 * heightfactor / 72;
+	
+	doc.addPage();
+	verticalOffset = margin[0];
+
+	doc.setFontType("bold");
+	doc.text(margin[3], verticalOffset, 'Rentenbeiträge und Entgeltpunkte');
+	
+	doc.setLineWidth(0.05);
+	doc.rect(17, verticalOffset, 3.4, 4.2); 
+	verticalOffset +=  fontsizeS * heightfactor/ 72;
+	
+	doc.setFontType("normal");
+	doc.text(margin[3], verticalOffset, 'Bisher haben wir für Ihr Rentenkonto folgende Beiträge erhalten:\n'
+			+ 'Von Ihnen\n'
+			+ 'Von Ihrem/n Arbeitgeber/n\n'
+			+ 'Von öffentlichen Kassen (z.B. Krankenkasse, Agentur für Arbeit)\n'
+			+ 'Für Ihre Kindererziehungszeiten wurden vom Bund pauschale Beiträge\n'
+			+ 'gezahlt.\n'
+			+ 'Aus den erhaltenen Beiträgen und Ihren sonstigen Versicherungszeiten\n'
+			+ 'haben Sie bisher insgesamt Entgeltpunkte in folgender Höhe erworben:'
+	);
+	verticalOffset +=  fontsizeS * 10 * heightfactor / 72;
+
+	doc.setFontType("bold");
+	doc.text(margin[3], verticalOffset, 'Rente wegen voller Erwerbsminderung');
+	verticalOffset +=  fontsizeS * heightfactor/ 72;
+	
+	doc.setFontType("normal");
+	doc.text(margin[3], verticalOffset, 'Bei einer Rente wegen Erwerbsminderung schreiben wir Ihnen, sofern Sie das 62. Lebensjahr\n'
+			+ 'noch nicht vollendet haben, zusätzliche Entgeltpunkte gut, ohne dass hierfür Beiträge gezahlt\n'
+			+ 'worden sind. Eine Erwerbsminderungsrente wird auf Antrag grundsätzlich nur gezahlt, wenn in\n'
+			+ 'den letzten fünf Jahren vor Eintritt der Erwerbsminderung mindestens drei Jahre\n'
+			+ 'Pflichtbeitragszeiten vorliegen.'
+	);
+	verticalOffset +=  fontsizeS * 7 * heightfactor / 72;
+
+	doc.setFontType("bold");
+	doc.text(margin[3], verticalOffset, 'Höhe Ihrer künftigen Regelaltersrente');
+	verticalOffset +=  fontsizeS * heightfactor/ 72;
+	
+	doc.setFontType("normal");
+	doc.text(margin[3], verticalOffset, 'Zur Berechnung Ihrer künftigen Rente ermitteln wir die durchschnittlichen Entgeltpunkte für die\n'
+			+ 'letzten fünf Kalenderjahre. Dabei können wir für das jeweils letzte Kalenderjahr vor der\n'
+			+ 'Renteninformation nur einen vorläufigen Durchschnittsverdienst aller Versicherten verwenden.\n'
+			+ 'Der endgültige Durchschnittsverdienst weicht regelmäßig von dem vorläufigen Wert ab. Daher\n'
+			+ 'kann sich die ermittelte Rente im Vergleich zu Ihrer vorherigen Renteninformation auch bei\n'
+			+ 'gleichbleibender Beitragszahlung erhöht oder vermindert haben.'
+	);
+	verticalOffset +=  fontsizeS * 8 * heightfactor / 72;
+	
+	doc.setFontType("bold");
+	doc.text(margin[3], verticalOffset, 'Rentenanpassung');
+	verticalOffset +=  fontsizeS * heightfactor/ 72;
+	
+	doc.setFontType("normal");
+	doc.text(margin[3], verticalOffset, 'Die Dynamisierung (Erhöhung) der Rente erfolgt durch die Rentenanpassung. Sie richtet sich\n'
+			+ 'grundsätzlich nach der Lohnentwicklung, die für die Rentenanpassung - insbesondere aufgrund\n'
+			+ 'der demografischen Entwicklung - nur vermindert berücksichtigt wird. Die Höhe der zukünftigen\n'
+			+ 'Rentenanpassungen kann nicht verlässlich vorhergesehen werden. Wir haben Ihre Rente daher\n'
+			+ 'unter Berücksichtigung der Annahmen der Bundesregierung zur Lohnentwicklung dynamisiert.\n'
+			+ 'Die ermittelten Beträge sind - wie alle weiteren späteren Einkünfte (z.B. aus einer\n'
+			+ 'Lebensversicherung) - wegen des Anstiegs der Lebenshaltungskosten und der damit\n'
+			+ 'verbundenen Geldentwertung (Inflation) in ihrer Kaufkraft aber nicht mit einem heutigen\n'
+			+ 'Einkommen in dieser Höhe vergleichbar (Kaufkraftverlust). So werden bei einer Inflationsrate\n'
+			+ 'von beispielsweise 1,5 Prozent pro Jahr bei Beginn Ihrer Regelaltersrente 100 EUR\n'
+			+ 'voraussichtlich nur noch eine Kaufkraft nach heutigen Werten von etwa ' + parseInt(config.purchasingPower * 100,10) + ' EUR besitzen\n'
+	);
+	verticalOffset +=  fontsizeS * 7 * heightfactor / 72;
+	
+	
+
+	if (typeof doc !== "undefined") {
+		var string = doc.output('datauristring');
+		$('.preview-pane').attr('src', string);
+	}
+	if (filename != null){
+		doc.save(filename);
+	}
+}
+/*rvsatz Eurokompensiert bis 2000 */
+rvsatz=new Array(
+		/*1955-1960*/	5.11,5.62,7.16,7.16,7.16,7.16,
+		/*1961-1970*/	7.16,7.16,7.16,7.16,7.16,7.16,7.16,7.67,8.18,8.69,
+		/*1971-1980*/	8.69,8.69,9.2,9.2,9.2,9.2,9.2,9.2,9.2,9.2,
+		/*1981-1990*/	9.46,9.46,9.46,9.46,9.56,9.82,9.56,9.56,9.56,9.56,
+		/*1991-2000*/	9.56,9.05,8.95,9.82,9.51,9.82,10.38,10.38,9.97,9.87,
+		/*2001-2010*/	9.77,19.1,19.5,19.5,19.5,19.5,19.9,19.9,19.9,19.9,
+		/*2011-2020*/	19.9,19.6,18.9,18.9,18.9,18.9,18.9,18.9,18.9,18.9,
+		/*2021-2030*/	18.9,18.9,18.9,18.9,18.9,18.9,18.9,18.9,18.9,18.9,
+		/*2031-2040*/	18.9,18.9,18.9,18.9,18.9,18.9,18.9,18.9,18.9,18.9,
+		/*2041-2050*/	18.9,18.9,18.9,18.9,18.9,18.9,18.9,18.9,18.9,18.9,
+		/*2051-2060*/	18.9,18.9,18.9,18.9,18.9,18.9,18.9,18.9,18.9,18.9,
+		/*2061-2062*/	18.9,18.9);
+
+/* max 2062, geb.1995 */
+
+function getBeitragsbemessungsgrenzeByYear(year) {
+
+var grenzwert = new Array(
+		/*1955-1960*/	9000,9000,9000,9600,9600,10200,
+		/*1961-1970*/	10800,11400,12000,13200,14400,15600,16800,19200,20400,21600,
+		/*1971-1980*/	22800,25200,27600,30000,33600,37200,40800,44400,48000,50400,
+		/*1981-1990*/	52800,56400,60000,62400,64800,67200,68400,72000,73200,75600,
+		/*1991-2000*/	78000,81600,86400,91200,93600,96000,98400,100800,102000,103200,
+		/*2000-2010*/	104400,54000,61200,61800,62400,63000,63000,63600,64800,66000,
+		/*2011-2020*/	66000,67200,69600,71400,72600,74400,74400,74400,74400,74400,
+		/*2021-2030*/	74400,74400,74400,74400,74400,74400,74400,74400,74400,74400,
+		/*2031-2040*/	74400,74400,74400,74400,74400,74400,74400,74400,74400,74400,
+		/*2041-2050*/	74400,74400,74400,74400,74400,74400,74400,74400,74400,74400,
+		/*2051-2060*/	74400,74400,74400,74400,74400,74400,74400,74400,74400,74400,
+		/*2061-2062*/	74400,74400);
+
+	if (year > 1955 + grenzwert.length - 1) {
+		return grenzwert[grenzwert.length-1];
+	}
+	return grenzwert[year-1955];
+}
+
+function getRelevantIncomePerMonthByIncomePerMonthAndYear(incomePerMonth, year) {
+	if (incomePerMonth < (getBeitragsbemessungsgrenzeByYear(year)/12)){
+		return incomePerMonth;
+	} else {
+		return (getBeitragsbemessungsgrenzeByYear(year)/12);
+	}
+}
+
+
+/*
+ * Ermittlung des Durchschnittsentgelts für ein spezielles Jahr
+ * SGB VI Anlage 1
+ */
+function getDurchschnittsentgeltByYear (year){
+	var durchschnittsentgeltTabelle =  new Array(
+	/*1955-1960*/	4548,4844,5043,5330,5602,6101,
+	/*1961-1970*/	6723,7328,7775,8467,9229,9863,10219,10842,11839,13343,
+	/*1971-1980*/	14931,16335,18295,20381,21808,23335,24945,26242,27685,29485,
+	/*1981-1990*/	30900,32198,33293,34292,35286,36627,37726,38896,40063,41946,
+	/*1991-2000*/	44421,46820,48178,49142,50665,51678,52143,52925,53507,54256,
+	/*2000-2010*/	55216,28626,28938,29060,29202,29494,29951,30625,30506,31144,
+	/*2011-2016*/	32100,33002,33659,34514,34999,36267);
+	
+	if (year > 1955 + durchschnittsentgeltTabelle.length - 1) {
+		return durchschnittsentgeltTabelle[durchschnittsentgeltTabelle.length-1];
+	}
+	return durchschnittsentgeltTabelle[year - 1955];
+}
+
+/*
+ * Berechnung der Entgeltpunkte
+ */
+function getEntgeltpunkteByIncomeAndYear(income, year){
+	var result = 0;
+	result = income / getDurchschnittsentgeltByYear(year);
+	return result;
+}
+
+/*
+ * Berechnung der Anhebung der Regelaltersgrenze in Monaten 
+ */
+function rentenEinstieg65PlusMonate(geburtsjahr) {
+	geburtsjahr = parseInt(geburtsjahr, 10);
+	if (geburtsjahr<1947){
+		return 0;
+	}
+
+	if (geburtsjahr >= 1964) {
+		return 24;
+	}
+	
+	if (geburtsjahr>=1947 && geburtsjahr <= 1964)
+	{
+		return geburtsjahr-1946;
+	}
+		
+	if (geburtsjahr>=1947 && geburtsjahr > 1964) {
+		return 12+(geburtsjahr-1958)*2;
+	}
+}
+
+/* 
+ * Berechnung der Regelaltersgrenze
+ */
+ 
+function getStandardPensionDateByBirthDate(birthDate, realDate) {
+	var result = new Date();
+	realDate = realDate || false;
+	if (realDate) {
+		result = new Date(birthDate.getFullYear() + 65, rentenEinstieg65PlusMonate(birthDate.getFullYear()) + birthDate.getMonth(), birthDate.getDate()); 
+	} else {
+		result = new Date(birthDate.getFullYear() + 65, rentenEinstieg65PlusMonate(birthDate.getFullYear()) + birthDate.getMonth() + 1,1); 
+	}
+
+	return result;
+} 
+
+function getYearsTillPension(birthDate, refDate) {
+	var pensionDate = getStandardPensionDateByBirthDate(birthDate);
+	return yearDiff(pensionDate, new Date()) + 1;	
+}
+
+function getMonthTillPension(birthDate, refDate) {
+	refDate = refDate || new Date();
+
+	var dateOfEntry = getStandardPensionDateByBirthDate($.fn.datebox.defaults.parser($('#birthdate').datebox('getValue')));
+		
+	return monthDiff(new Date(), dateOfEntry);		    	
+}
+/*
+ * Beginn des 17. Lj. ermitteln
+ */
+function getBeginOfEmploymentByBirthDate(birthDate){
+	var result = new Date(birthDate.getFullYear() + 17, birthDate.getMonth(), birthDate.getDate());
+	return result;
+}
+
+function getGainedPensionPoints(){
+	var data = $('#datagrid').datagrid('getRows');
+	var sumPoints = 0;
+	for (i = 0; i < data.length; i++)
+		{
+		sumPoints += data[i].points;
+		}
+	return sumPoints;
+}
+
+function calcPensionPointsByIncomePerMonthAndYear(incomePerMonth, year ){
+	incomePerMonth = incomePerMonth || 0;
+	year = year || new Date().getFullYear();
+	
+	var relevantIncome = getRelevantIncomePerMonthByIncomePerMonthAndYear(incomePerMonth, year);
+	var pointsPerMonth = getEntgeltpunkteByIncomeAndYear(relevantIncome, year);
+	return pointsPerMonth; 
+}
+
+function calcExpectedPensionPointsTillRetirement(alreadyGainedPensionPoints, expectedIncomePerMonth, monthTillRetirement) {
+	var sumOfPensionPoints = alreadyGainedPensionPoints;
+	sumOfPensionPoints += calcPensionPointsByIncomePerMonthAndYear(expectedIncomePerMonth, 2080) * monthTillRetirement;
+	return sumOfPensionPoints;
+}
+
+var editIndex = undefined;
+
+function endEditing(){
+    if (editIndex == undefined){return true}
+    if ($('#datagrid').datagrid('validateRow', editIndex)){
+        $('#datagrid').datagrid('endEdit', editIndex);
+        editIndex = undefined;
+        return true;
+    } else {
+        return false;
+    }
+}
+
+function onClickCell(index, field){
+    if (editIndex != index){
+        if (endEditing()){
+            $('#datagrid').datagrid('selectRow', index)
+                    .datagrid('beginEdit', index);
+            var ed = $('#datagrid').datagrid('getEditor', {index:index,field:field});
+            if (ed){
+                ($(ed.target).data('textbox') ? $(ed.target).textbox('textbox') : $(ed.target)).focus();
+            }
+            editIndex = index;
+        } else {
+            setTimeout(function(){
+                $('#datagrid').datagrid('selectRow', editIndex);
+            },0);
+        }
+    }
+}
+
+function onEndEdit(index, row){
+    var ed = $(this).datagrid('getEditor', {
+        index: index,
+        field: 'productid'
+    });
+}
+
+$( document ).ready(function() {
+	$('#birthdate').datebox({
+	    required:true,
+	    onChange: function (newValue, oldValue) {
+	    	if (newValue.split('.').length == 3){
+		    	var year = parseInt(newValue.split('.')[2], 10);
+		    	var month = parseInt(newValue.split('.')[1], 10);
+		    	
+		    	var dateOfEntry = getStandardPensionDateByBirthDate($.fn.datebox.defaults.parser($('#birthdate').datebox('getValue')));
+		    	$('#entrydate').textbox('setValue', $.fn.datebox.defaults.formatter(dateOfEntry));
+		    	
+		    	$('#monthTillRetirement').textbox('setValue', monthDiff(new Date(), dateOfEntry));		    	
+	    	}
+	    }
+	});
+
+	$('#salutation').textbox({
+	    editable: true
+	});
+	
+	$('#firstname').textbox({
+	    editable: true
+	});
+
+	$('#lastname').textbox({
+	    editable: true
+	});
+	
+	$('#entrydate').textbox({
+	    editable: false
+	});
+	
+	$('#monthTillRetirement').textbox({
+	    editable: false
+	});
+	
+	$('#futurePointsPerMonth').textbox({
+	    editable: false
+	});
+	
+	$('#futureIncomePerMonth').numberbox({
+    	onChange: function (newValue, oldValue) {
+    		pointsPerMonth = calcPensionPointsByIncomePerMonthAndYear(newValue);
+	    	$('#futurePointsPerMonth').textbox('setValue', pointsPerMonth );		    	
+    	}
+	});
+	
+	activateGrid();
+	
+	$('#tt').tabs({
+	    border:false,
+	    onSelect:function(title, index){
+	        if (index == 2) 
+	        	{
+	        		generatePDF(generateConfiguration());
+	        	}
+	    }
+	});
+});
+
+function addEntry() {
+	$('#add').dialog({
+	    title: 'Beitrag hinzufügen',
+	    width: 400,
+	    height: 200,
+	    closed: false,
+	    cache: false,
+	    modal: true,
+		buttons:[{
+			text:'Save',
+			handler:function(){
+				var beginDate = $('#addBeitrag input[name="beginDate"]').val();
+				var endDate = $('#addBeitrag input[name="endDate"]').val();
+				var income = $('#addBeitrag input[name="income"]').val();
+				var year = new Date($('#addBeitrag input[name="beginDate"]').val()).getFullYear();
+	        	var relevantIncome = getRelevantIncomePerMonthByIncomePerMonthAndYear(income, year);
+	        	var entgeltPunkte = getEntgeltpunkteByIncomeAndYear(relevantIncome * 12, row.year) / 12;
+	        	
+				var entry = {
+					beginDate : $('#addBeitrag input[name="beginDate"]').val(),
+					endDate : $('#addBeitrag input[name="endDate"]').val(),
+					income : $('#addBeitrag input[name="income"]').val(),
+					year : new Date($('#addBeitrag input[name="beginDate"]').val()).getFullYear(),
+					points : entgeltPunkte
+				};
+				$('#datagrid').datagrid('appendRow', entry);
+				$('#datagrid').datagrid('sort', {
+					sortName: 'beginDate',
+					sortOrder: 'desc'
+				});
+				$('#add').window('close');
+			}
+		},{
+			text:'Abbrechen',
+			handler:function(){$('#add').window('close');}
+		}]
+	});
+}
+function addSerialEntry() {
+	$('#addSerial').dialog({
+	    title: 'Beitrag hinzufügen',
+	    width: 400,
+	    height: 200,
+	    closed: false,
+	    cache: false,
+	    modal: true,
+		buttons:[{
+			text:'Save',
+			handler:function(){
+				var beginMonth = $('#addSerialBeitrag input[name="beginMonth"]').val();
+				var endMonth = $('#addSerialBeitrag input[name="endMonth"]').val();
+				var income = $('#addSerialBeitrag input[name="income"]').val();
+				var year = parseInt($('#addSerialBeitrag input[name="year"]').val(),10);
+	        	var relevantIncome = getRelevantIncomePerMonthByIncomePerMonthAndYear(income, year);
+	        	var entgeltPunkte = getEntgeltpunkteByIncomeAndYear(relevantIncome * 12, year) / 12;
+				for (var i = parseInt(beginMonth); i <= parseInt(endMonth); i++ ){
+					var entry = {
+						beginDate : $.fn.datebox.defaults.formatter(new Date(year, i-1, 1)),
+						endDate : $.fn.datebox.defaults.formatter(new Date(year, i, 0)),
+						income : $('#addSerialBeitrag input[name="income"]').val(),
+						year : year,
+						points : entgeltPunkte,
+						fiction: (new Date(year, i-1, 1) > new Date()) ? 'fiktiv' : '' 
+					};
+					if ((new Date(year, i-1, 1) < new Date())) {
+						$('#datagrid').datagrid('appendRow', entry);
+					}
+
+				}
+				$('#datagrid').datagrid('sort', {
+					sortName: 'beginDate',
+					sortOrder: 'desc'
+				});
+				$('#addSerial').window('close');
+			}
+		},{
+			text:'Abbrechen',
+			handler:function(){$('#addSerial').window('close');}
+		}]
+	});
+}
+
+function activateGrid(){
+	var toolbar = [{
+		text:'',
+		iconCls:'icon-add',
+		handler: addEntry
+	},{
+		text:'',
+		iconCls:'icon-add',
+		handler: addSerialEntry
+	},{
+		text:'',
+		iconCls:'icon-cut',
+		handler:function(){
+			
+			($('#datagrid').datagrid('deleteRow', $('#datagrid').datagrid('getRowIndex', $('#datagrid').datagrid('getSelected'))));
+		}
+	},'-',{
+		text:'Save',
+		iconCls:'icon-save',
+		handler:function(){alert('save')}
+	}];
+
+	$('#datagrid').datagrid({
+	    toolbar: toolbar,
+	    remoteSort: false,
+	    height: 500,
+	    showFooter: true,
+	    rownumbers: true,
+
+        onClickCell: onClickCell,
+        onEndEdit: onEndEdit,
+	    columns:[[
+  	        {field:'beginDate',title:'Beginn',width:100,sorter:function(a,b){
+				a = a.split('.');  
+				b = b.split('.');  
+				if (a[2] == b[2]){  
+					if (a[0] == b[0]){  
+						return (a[1]>b[1]?1:-1);  
+					} else {  
+						return (a[0]>b[0]?1:-1);  
+					}  
+				} else {  
+					return (a[2]>b[2]?1:-1);  
+				}  
+			}
+  	        },
+	        {field:'endDate',title:'Ende',width:100},
+	        {field:'year', hidden: true},
+	        {field:'income',title:'Einkommen',width:100,align:'right'},
+	        {field:'incomeRelevant',title:'Einkommen',width:100,align:'right',formatter: function(value,row,index){
+	        	return getRelevantIncomePerMonthByIncomePerMonthAndYear(row.income, row.year);
+			}},
+	        {field:'points',title:'EP',width:100,align:'right'},
+	        {field:'fiction', title: 'fiktiv', editor:{type:'checkbox',options:{on:'fiktiv',off:''}}},
+	       
+	    ]],
+
+	    groupField:'year',
+		view: groupview,
+		groupFormatter:function(value, rows){
+			var sumRelevantIncome = rows.reduce(function(pv, cv) { return pv + parseFloat(getRelevantIncomePerMonthByIncomePerMonthAndYear(cv.income, cv.year)); }, 0);
+			var entgeltpunkte = (parseInt(getEntgeltpunkteByIncomeAndYear(sumRelevantIncome, value) * 100)/100);
+			return 'Jahr ' + value + '; Gesamteinkommen: ' + sumRelevantIncome + ' &euro; ; Entgeltpunkte: ' + entgeltpunkte;
+		}
+	});
+}
+</script>
+</head>
+<body>
+
+<div id="add" style="display:none;">
+<form id="addBeitrag">
+	<div>
+   	<label for="income">Gehalt (&euro;):</label>
+	<input name="income" type="text" class="easyui-numberbox" style="width:80px;" data-options="min:0,precision:2">
+	</div><div>
+   	<label for="beginDate">Beginn:</label>
+	<input name="beginDate" type="text" class="easyui-datebox" style="width:80px;" data-options="min:0,precision:2">
+	</div><div>
+   	<label for="endDate">Ende:</label>
+	<input name="endDate" type="text" class="easyui-datebox" style="width:80px;" data-options="min:0,precision:2">
+	</div>
+	
+</form>
+
+</div>
+<div id="addSerial" style="display:none;">
+<form id="addSerialBeitrag">
+	<div>
+	   	<label for="income">monatliches Gehalt (&euro;):</label>
+		<input name="income" type="text" class="easyui-numberbox" style="width:100px;" value="0" data-options="min:0,precision:2">
+	</div>
+	   	<label for="year">Jahr:</label>
+		<input name="year" class="easyui-numberspinner" style="width:100px;" required="required" data-options="min:1955,max:2062">
+	<div>
+   	</div>
+   	   	<label for="beginMonth">Monat:</label>
+		<input name="beginMonth" class="easyui-numberspinner" style="width:100px;" required="required" data-options="min:1,max:12">
+   	<div>
+   	</div>
+   	   	<label for="endMonth">Monat:</label>
+		<input name="endMonth" class="easyui-numberspinner" style="width:100px;" required="required" data-options="min:1,max:12">
+   	<div>
+   	</div>
+	
+</form>
+
+</div>
+
+
+<div id="tt" class="" style="width:800px;height:600px;">
+    <div title="Angaben zur Person" style="padding:20px;display:none;">
+        <form id="ff" method="post">
+		    <div>
+		        <label for="salutation">Anrede:</label>
+		        <input class="easyui-validatebox" id="salutation" type="text" style="width:100px;" value="Herr" />
+		    </div>
+		    <div>
+		        <label for="firstname">Vorname:</label>
+		        <input class="easyui-validatebox" id="firstname" type="text" style="width:100px;" value="Max"/>
+		    </div>
+		    <div>
+		        <label for="lastname">Nachname:</label>
+		        <input class="easyui-validatebox" id="lastname" type="text" style="width:100px;" value="Mustermann" />
+		    </div>
+		    <div>
+		        <label for="birthdate">Geburtstag:</label>
+		        <input id="birthdate" type="text" style="width:100px;" value="01.01.1990">
+		    </div>
+		    <div>
+		        <label for="entrydate">Renteneintrittsalter:</label>
+		        <input class="easyui-validatebox" id="entrydate" style="width:100px;" type="text">
+		    </div>
+		    <div>
+		        <label for="monthTillRetirement">verbleibende Monate bis zur Rente:</label>
+		        <input class="easyui-validatebox" id="monthTillRetirement" style="width:100px;" type="text">
+		    </div>
+		    <div>
+		        <label for="futureIncomePerMonth">monatliches Einkommen</label>
+		        <input class="easyui-validatebox" id="futureIncomePerMonth" style="width:100px;" type="text">
+		    </div>
+		    <div>
+		        <label for="futurePointsPerMonth">monatliche Entgeltpunkte</label>
+		        <input class="easyui-validatebox" id="futurePointsPerMonth" style="width:100px;" type="text">
+		    </div>
+		</form>
+    </div>
+    <div title="Einkünfte" data-options="" style="overflow:auto;padding:20px;display:none;">
+        <table id="datagrid"></table>
+    </div>
+    <div title="Resultat">
+        <iframe id="result" class="page-icon preview-pane" scrolling="no" height="600" width="780" style="overflow:hidden;"></iframe>
+    </div>
+</div>
+</body>
+</html>
